@@ -29,8 +29,19 @@ To learn more about Next.js, take a look at the following resources:
 
 You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
-## Deploy on Vercel
+## Deployment
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+This UI deploys to **Vercel**; the API (`reddit-scraper-python`) runs on a separate
+VM. The browser streams the SSE report **directly** from the API, so:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. **Backend (VM):** run the FastAPI app and expose it over **HTTPS** (a Vercel
+   page can't call a plain-`http://` endpoint, and you can't get a cert for a bare
+   IP). Easiest free route: a Cloudflare Tunnel (`cloudflared`) giving a hostname
+   like `https://reddit-api.yourname.me` → `localhost:8000`. Set the backend's
+   `ALLOWED_ORIGINS` env to your Vercel origin (e.g. `https://your-app.vercel.app`).
+
+2. **Frontend (Vercel):** set `NEXT_PUBLIC_API_URL` to that HTTPS hostname **before
+   building** (it's inlined at build time). See `.env.example`. Vercel auto-detects
+   Next.js — no `vercel.json` needed.
+
+For local dev, leave `NEXT_PUBLIC_API_URL` unset (defaults to `http://localhost:8000`).
