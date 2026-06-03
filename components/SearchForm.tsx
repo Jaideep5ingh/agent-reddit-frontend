@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Turnstile, type TurnstileInstance } from "@marsidev/react-turnstile";
 import { Search, Zap, FileText, ChevronDown, Loader2, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,7 +13,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import type { ScrapeRequest } from "@/lib/types";
-import { API_BASE as API } from "@/lib/api";
+import { API_BASE as API, TURNSTILE_SITE_KEY } from "@/lib/api";
 
 const DEFAULTS: ScrapeRequest = {
   query: "",
@@ -50,6 +51,13 @@ export default function SearchForm({ onStart, disabled, prefill }: Props) {
   const [showAdvanced, setAdv] = useState(false);
   const [loading, setLoading]  = useState(false);
   const [error, setError]      = useState<string | null>(null);
+  // Cloudflare Turnstile: the widget issues a short-lived, SINGLE-USE token via
+  // onSuccess. We send it with POST /jobs, then reset() the widget to mint a fresh
+  // one for the next search (a redeemed token can't be reused). Only active when a
+  // site key is configured — otherwise local dev runs without the widget.
+  const [token, setToken]      = useState<string | null>(null);
+  const turnstileRef           = useRef<TurnstileInstance | null>(null);
+  const turnstileOn            = !!TURNSTILE_SITE_KEY;
 
   const set = <K extends keyof ScrapeRequest>(k: K, v: ScrapeRequest[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
@@ -62,12 +70,20 @@ export default function SearchForm({ onStart, disabled, prefill }: Props) {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!form.query.trim() || loading || disabled) return;
+    // If Turnstile is enabled but hasn't issued a token yet (widget still solving),
+    // ask the user to retry in a moment rather than firing a request the API will 403.
+    if (turnstileOn && !token) {
+      setError("Verifying you're human — one moment, then try again.");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["cf-turnstile-response"] = token;
       const res  = await fetch(`${API}/jobs`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(form),
       });
       const data = await res.json();
@@ -77,6 +93,12 @@ export default function SearchForm({ onStart, disabled, prefill }: Props) {
       setError(err instanceof Error ? err.message : "Could not reach API");
     } finally {
       setLoading(false);
+      // The token we just sent is now spent (single-use). Reset to fetch a fresh
+      // one so the next search isn't rejected as a duplicate.
+      if (turnstileOn) {
+        setToken(null);
+        turnstileRef.current?.reset();
+      }
     }
   }
 
@@ -192,6 +214,18 @@ export default function SearchForm({ onStart, disabled, prefill }: Props) {
           </div>
         )}
       </div>
+
+      {/* ── Turnstile (human check) ──────────────── */}
+      {turnstileOn && (
+        <Turnstile
+          ref={turnstileRef}
+          siteKey={TURNSTILE_SITE_KEY}
+          options={{ theme: "auto", size: "flexible" }}
+          onSuccess={setToken}
+          onExpire={() => setToken(null)}
+          onError={() => setToken(null)}
+        />
+      )}
 
       {/* ── Error ────────────────────────────────── */}
       {error && (
