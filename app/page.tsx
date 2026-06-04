@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RotateCcw, Sparkles, TrendingUp, UtensilsCrossed, Plane, ArrowRight } from "lucide-react";
+import { RotateCcw, Sparkles, TrendingUp, UtensilsCrossed, Plane, ArrowRight, Clock, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import SearchForm from "@/components/SearchForm";
@@ -23,7 +23,7 @@ const INITIAL: StreamState = {
   jobId: null, status: "idle", stages: INITIAL_STAGES,
   variants: [], posts: [], report: "",
   threadsTotal: 10, threadsFetched: 0,
-  error: null, progressMsg: "",
+  error: null, progressMsg: "", queued: false,
 };
 
 function patchStage(stages: Stage[], id: string, s: Stage["status"]): Stage[] {
@@ -78,7 +78,9 @@ export default function Home() {
 
     es.addEventListener("progress", (e) => {
       const d = JSON.parse(e.data); const step: string = d.step ?? "";
-      patch({ progressMsg: d.message ?? "" });
+      // "queued" = waiting for a free server slot (concurrency cap). Any other step means
+      // the job has started, so clear the queued flag.
+      patch({ progressMsg: d.message ?? "", queued: step === "queued" });
       setState((s) => ({
         ...s,
         stages:
@@ -233,10 +235,23 @@ export default function Home() {
                 </div>
               )}
 
+              {/* Queued banner — job is waiting for a free server slot (concurrency cap) */}
+              {state.queued && isRunning && (
+                <div className="flex items-center gap-3 rounded-xl px-4 py-3 border animate-slide-up"
+                  style={{ background: "rgba(250,204,21,0.06)", borderColor: "rgba(250,204,21,0.2)" }}>
+                  <Clock className="h-4 w-4 flex-shrink-0" style={{ color: "#facc15" }} />
+                  <span className="text-sm font-medium" style={{ color: "#facc15" }}>Queued</span>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">
+                    {state.progressMsg || "Waiting for a free slot…"}
+                  </span>
+                </div>
+              )}
+
               {/* Stage bar */}
               {(isRunning || isDone) && (
                 <div className="rounded-2xl border border-border bg-card/80 p-5 animate-slide-up backdrop-blur-sm">
-                  <StageBar stages={state.stages} msg={isFetching ? `${whimsy}…` : (isRunning ? state.progressMsg : "")} />
+                  <StageBar stages={state.stages} msg={state.queued ? "" : (isFetching ? `${whimsy}…` : (isRunning ? state.progressMsg : ""))} />
                 </div>
               )}
 

@@ -40,4 +40,5 @@ export interface StreamState {
   threadsFetched: number;
   error: string | null;
   progressMsg: string;
+  queued: boolean;   // true while the job is waiting for a free server slot (concurrency cap)
 }
