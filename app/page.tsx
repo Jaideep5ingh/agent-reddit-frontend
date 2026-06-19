@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RotateCcw, Sparkles, TrendingUp, UtensilsCrossed, Plane, ArrowRight, Clock, Loader2, SlidersHorizontal, X } from "lucide-react";
+import { RotateCcw, Sparkles, TrendingUp, UtensilsCrossed, Plane, ArrowRight, Clock, Loader2, SlidersHorizontal, X, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import SearchForm from "@/components/SearchForm";
@@ -68,6 +68,9 @@ export default function Home() {
   const [navOpen, setNavOpen] = useState(false);
   const esRef = useRef<EventSource | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Tracks the live job so we can abort it (Stop button, or a new search) — aborting
+  // frees the worker + the shared Reddit rate budget instead of letting it run on.
+  const jobIdRef = useRef<string | null>(null);
 
   const clearJobTimeout = () => {
     if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
@@ -75,7 +78,18 @@ export default function Home() {
 
   const patch = (p: Partial<StreamState>) => setState((s) => ({ ...s, ...p }));
 
-  const reset = () => { esRef.current?.close(); clearJobTimeout(); setState(INITIAL); };
+  // Fire-and-forget abort of a job on the backend (stops scrape/fetch/LLM, frees budget).
+  const abortJob = (jobId: string | null) => {
+    if (jobId) fetch(`${API}/jobs/${jobId}/abort`, { method: "POST" }).catch(() => {});
+  };
+
+  const reset = () => {
+    abortJob(jobIdRef.current); jobIdRef.current = null;
+    esRef.current?.close(); clearJobTimeout(); setState(INITIAL);
+  };
+
+  // Stop button: abort the running job and return to a clean slate.
+  const stop = () => { reset(); };
 
   const useExample = (q: string) => {
     setPrefill((p) => ({ q, n: p.n + 1 }));
@@ -84,6 +98,8 @@ export default function Home() {
 
   const handleStart = useCallback((jobId: string, req: ScrapeRequest) => {
     setNavOpen(false);  // close the mobile drawer so the report is visible
+    abortJob(jobIdRef.current);  // a new search cancels the previous job (frees rate budget)
+    jobIdRef.current = jobId;
     esRef.current?.close();
     const stages = req.report ? INITIAL_STAGES
       : INITIAL_STAGES.filter((s) => s.id !== "agent" && s.id !== "report");
@@ -137,10 +153,14 @@ export default function Home() {
       // The backend also sends the full report on `done`. If any report_token was missed
       // live (slow network, trimmed stream), overwrite with this complete copy so the
       // report never renders gappy. Falls back to the streamed text if absent.
-      clearJobTimeout();
+      clearJobTimeout(); jobIdRef.current = null;
       const d = "data" in e ? JSON.parse((e as MessageEvent).data || "{}") : {};
       setState((s) => ({ ...s, status: "done", progressMsg: "", report: d.report ?? s.report, stages: s.stages.map((x) => ({ ...x, status: "done" })) }));
       es.close();
+    });
+    es.addEventListener("aborted", () => {
+      clearJobTimeout(); jobIdRef.current = null;
+      setState((s) => ({ ...s, status: "idle", progressMsg: "" })); es.close();
     });
     es.addEventListener("error", (e) => {
       clearJobTimeout();
@@ -207,7 +227,12 @@ export default function Home() {
             Live
           </div>
           <ThemeToggle />
-          {hasData && (
+          {isRunning ? (
+            <Button variant="outline" size="sm" onClick={stop}
+              className="h-7 gap-1.5 text-xs text-rose-400 border-rose-400/30 hover:bg-rose-400/10 hover:text-rose-300">
+              <Square className="h-2.5 w-2.5 fill-current" /> Stop
+            </Button>
+          ) : hasData && (
             <Button variant="outline" size="sm" onClick={reset}
               className="h-7 gap-1.5 text-xs">
               <RotateCcw className="h-3 w-3" /> New search
