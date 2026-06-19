@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RotateCcw, Sparkles, TrendingUp, UtensilsCrossed, Plane, ArrowRight, Clock, Loader2 } from "lucide-react";
+import { RotateCcw, Sparkles, TrendingUp, UtensilsCrossed, Plane, ArrowRight, Clock, Loader2, SlidersHorizontal, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import SearchForm from "@/components/SearchForm";
@@ -14,7 +14,7 @@ import { API_BASE as API } from "@/lib/api";
 
 const INITIAL_STAGES: Stage[] = [
   { id: "scraping", label: "Scraping", status: "idle" },
-  { id: "agent",    label: "AI Agent", status: "idle" },
+  { id: "agent",    label: "Analyze",  status: "idle" },
   { id: "report",   label: "Report",   status: "idle" },
   { id: "done",     label: "Done",     status: "idle" },
 ];
@@ -55,19 +55,35 @@ const WHIMSY = [
 ];
 const randomWhimsy = () => WHIMSY[Math.floor(Math.random() * WHIMSY.length)];
 
+// Client-side safety net: if a job neither finishes nor errors within this window,
+// stop waiting and show the user a timeout message (the SSE/worker could be stuck).
+const JOB_TIMEOUT_MS = 5 * 60 * 1000;
+
 export default function Home() {
   const [state, setState] = useState<StreamState>(INITIAL);
   const [prefill, setPrefill] = useState({ q: "", n: 0 });
   const [whimsy, setWhimsy] = useState(randomWhimsy);
+  // Mobile: the sidebar (search form) is an off-canvas drawer toggled by a header
+  // button. On desktop (md+) it's always-visible and this flag is ignored.
+  const [navOpen, setNavOpen] = useState(false);
   const esRef = useRef<EventSource | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearJobTimeout = () => {
+    if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+  };
 
   const patch = (p: Partial<StreamState>) => setState((s) => ({ ...s, ...p }));
 
-  const reset = () => { esRef.current?.close(); setState(INITIAL); };
+  const reset = () => { esRef.current?.close(); clearJobTimeout(); setState(INITIAL); };
 
-  const useExample = (q: string) => setPrefill((p) => ({ q, n: p.n + 1 }));
+  const useExample = (q: string) => {
+    setPrefill((p) => ({ q, n: p.n + 1 }));
+    setNavOpen(true);  // mobile: reveal the form (with the query pre-filled) so it can be run
+  };
 
   const handleStart = useCallback((jobId: string, req: ScrapeRequest) => {
+    setNavOpen(false);  // close the mobile drawer so the report is visible
     esRef.current?.close();
     const stages = req.report ? INITIAL_STAGES
       : INITIAL_STAGES.filter((s) => s.id !== "agent" && s.id !== "report");
@@ -75,6 +91,17 @@ export default function Home() {
 
     const es = new EventSource(`${API}/jobs/${jobId}/stream`);
     esRef.current = es;
+
+    // 5-minute client-side timeout: if nothing resolves the job by then, give up and
+    // tell the user (rather than spinning forever). Cleared on done/error/reset.
+    clearJobTimeout();
+    timeoutRef.current = setTimeout(() => {
+      es.close();
+      setState((s) => s.status === "running"
+        ? { ...s, status: "error", queued: false,
+            error: "Timed out after 5 minutes. The server may still be working — please try again." }
+        : s);
+    }, JOB_TIMEOUT_MS);
 
     es.addEventListener("progress", (e) => {
       const d = JSON.parse(e.data); const step: string = d.step ?? "";
@@ -86,9 +113,12 @@ export default function Home() {
         stages:
           step === "scraping" || step === "variants" ? patchStage(s.stages, "scraping", "active")
           : step === "scraped"  ? patchStage(s.stages, "scraping", "done")
-          : step === "agent"    ? patchStage(patchStage(s.stages, "scraping", "done"), "agent", "active")
-          : step === "agent_done" ? patchStage(s.stages, "agent", "done")
-          : step === "report"   ? patchStage(patchStage(s.stages, "agent", "done"), "report", "active")
+          // Analyze phase = fetch all content → AI-score → select top-N
+          : step === "fetching" || step === "scoring" || step === "agent"
+              ? patchStage(patchStage(s.stages, "scraping", "done"), "agent", "active")
+          : step === "selected" || step === "agent_done" ? patchStage(s.stages, "agent", "done")
+          : step === "report_map" || step === "report_reduce" || step === "report"
+              ? patchStage(patchStage(s.stages, "agent", "done"), "report", "active")
           : s.stages,
       }));
     });
@@ -103,15 +133,21 @@ export default function Home() {
       const d = JSON.parse(e.data);
       setState((s) => ({ ...s, report: s.report + (d.token ?? "") }));
     });
-    es.addEventListener("done", () => {
-      setState((s) => ({ ...s, status: "done", progressMsg: "", stages: s.stages.map((x) => ({ ...x, status: "done" })) }));
+    es.addEventListener("done", (e) => {
+      // The backend also sends the full report on `done`. If any report_token was missed
+      // live (slow network, trimmed stream), overwrite with this complete copy so the
+      // report never renders gappy. Falls back to the streamed text if absent.
+      clearJobTimeout();
+      const d = "data" in e ? JSON.parse((e as MessageEvent).data || "{}") : {};
+      setState((s) => ({ ...s, status: "done", progressMsg: "", report: d.report ?? s.report, stages: s.stages.map((x) => ({ ...x, status: "done" })) }));
       es.close();
     });
     es.addEventListener("error", (e) => {
+      clearJobTimeout();
       const d = "data" in e ? JSON.parse((e as MessageEvent).data) : {};
       patch({ status: "error", error: d.message ?? "Something went wrong" }); es.close();
     });
-    es.onerror = () => { setState((s) => s.status === "running" ? { ...s, status: "error", error: "Connection lost" } : s); es.close(); };
+    es.onerror = () => { clearJobTimeout(); setState((s) => s.status === "running" ? { ...s, status: "error", error: "Connection lost" } : s); es.close(); };
   }, []);
 
   const isRunning = state.status === "running";
@@ -134,12 +170,20 @@ export default function Home() {
     return () => clearInterval(id);
   }, [isFetching]);
 
+  // Clean up the SSE connection + pending timeout if the component unmounts mid-job.
+  useEffect(() => () => { esRef.current?.close(); clearJobTimeout(); }, []);
+
   return (
     <div className="app-bg h-screen flex flex-col overflow-hidden">
 
       {/* ── Header ─────────────────────────────────────── */}
       <header className="relative z-20 flex-shrink-0 flex items-center justify-between px-5 h-14 border-b border-border/80 bg-background/70 backdrop-blur-xl">
         <div className="flex items-center gap-3">
+          {/* Mobile-only: open the search/filters drawer */}
+          <button onClick={() => setNavOpen(true)} aria-label="Open search"
+            className="md:hidden flex items-center justify-center w-8 h-8 -ml-1 rounded-lg border border-border bg-card/60 text-foreground/80 hover:text-foreground transition-colors">
+            <SlidersHorizontal className="h-4 w-4" />
+          </button>
           <div className="relative w-7 h-7 rounded-lg flex items-center justify-center text-white text-[13px] font-black shadow-lg shadow-[var(--reddit-glow)]"
             style={{ background: "linear-gradient(135deg, var(--reddit-bright), var(--reddit))" }}>
             R
@@ -175,9 +219,24 @@ export default function Home() {
       {/* ── Body ───────────────────────────────────────── */}
       <div className="flex flex-1 min-h-0">
 
-        {/* Sidebar */}
-        <aside className="w-[360px] flex-shrink-0 flex flex-col border-r border-border/80 backdrop-blur-sm"
+        {/* Mobile drawer backdrop */}
+        {navOpen && (
+          <div onClick={() => setNavOpen(false)}
+            className="md:hidden fixed inset-0 top-14 z-30 bg-black/50 backdrop-blur-sm animate-fade-in" />
+        )}
+
+        {/* Sidebar — fixed off-canvas drawer on mobile, static panel on md+ */}
+        <aside
+          className={`flex flex-col border-r border-border/80 backdrop-blur-sm
+            fixed top-14 bottom-0 left-0 z-40 w-[85%] max-w-[340px] transition-transform duration-300
+            md:static md:top-0 md:z-auto md:w-[360px] md:max-w-none md:flex-shrink-0 md:translate-x-0
+            ${navOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full"}`}
           style={{ background: "var(--sidebar-gradient)" }}>
+          {/* Mobile-only close button */}
+          <button onClick={() => setNavOpen(false)} aria-label="Close"
+            className="md:hidden absolute top-3 right-3 z-10 flex items-center justify-center w-7 h-7 rounded-lg text-muted-foreground hover:text-foreground">
+            <X className="h-4 w-4" />
+          </button>
           <ScrollArea className="flex-1 min-h-0">
             <div className="p-5 space-y-6">
               <SearchForm onStart={handleStart} disabled={isRunning} prefill={prefill} />
@@ -192,7 +251,7 @@ export default function Home() {
         {/* Main */}
         <main className="flex-1 min-w-0 overflow-hidden flex flex-col">
           <ScrollArea className="flex-1 min-h-0">
-            <div className="px-6 py-7 max-w-3xl mx-auto space-y-4">
+            <div className="px-4 sm:px-6 py-5 sm:py-7 max-w-3xl mx-auto space-y-4">
 
               {/* Empty state */}
               {!hasData && (

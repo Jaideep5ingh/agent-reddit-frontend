@@ -19,7 +19,7 @@ const DEFAULTS: ScrapeRequest = {
   query: "",
   sort: "relevance",
   time_filter: "year",
-  limit: 50,
+  limit: 100,
   deep_search: true,
   report: true,
   min_score: 5,
@@ -189,10 +189,10 @@ export default function SearchForm({ onStart, disabled, prefill }: Props) {
 
         {showAdvanced && (
           <div className="mt-3 space-y-5 rounded-xl border border-border bg-input/40 p-4 animate-slide-up">
-            <SliderRow label="Min post score" value={form.min_score} min={0} max={50}
-              onChange={(v) => set("min_score", v)} />
-            <SliderRow label="Max threads to analyse" value={form.max_threads} min={1} max={30}
+            <SliderRow label="Max threads to analyse" value={form.max_threads} min={1} max={50}
               onChange={(v) => set("max_threads", v)} />
+            <SliderRow label="Posts per search" value={form.limit} min={50} max={100}
+              onChange={(v) => set("limit", v)} />
             <div className="space-y-2">
               <SectionLabel>Ollama model</SectionLabel>
               <Select value={form.model} onValueChange={(v) => set("model", v as string)}>
