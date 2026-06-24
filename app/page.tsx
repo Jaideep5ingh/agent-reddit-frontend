@@ -173,6 +173,9 @@ export default function Home() {
   const isRunning = state.status === "running";
   const isDone    = state.status === "done";
   const hasData   = state.posts.length > 0 || !!state.report || isRunning;
+  // Keep the posts table expanded through scrape + analyze (so the user can browse what
+  // was found), then collapse it once the report starts streaming (or the job finishes).
+  const collapsePosts = isDone || state.stages.find((s) => s.id === "report")?.status === "active";
   // While the agent reads threads we show rotating whimsical words instead of a
   // misleading numeric bar (the agent picks however many threads it judges useful).
   const isFetching = isRunning && state.stages.some((s) => s.id === "agent" && s.status === "active");
@@ -381,7 +384,7 @@ export default function Home() {
                 </div>
               )}
 
-              <PostsPanel posts={state.posts} />
+              <PostsPanel posts={state.posts} collapsed={collapsePosts} />
               <ReportPanel report={state.report} streaming={isRunning} />
             </div>
           </ScrollArea>

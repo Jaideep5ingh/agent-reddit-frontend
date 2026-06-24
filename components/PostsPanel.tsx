@@ -1,11 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ExternalLink, ArrowUp, MessageSquare, ChevronDown } from "lucide-react";
 import type { Post } from "@/lib/types";
 
-export default function PostsPanel({ posts }: { posts: Post[] }) {
+export default function PostsPanel({ posts, collapsed }: { posts: Post[]; collapsed?: boolean }) {
   const [open, setOpen] = useState(true);
+  // Expanded through scrape + analyze (so the user can browse what was found), then
+  // auto-collapses once the report starts so it takes focus. Still user-toggleable.
+  useEffect(() => { if (collapsed) setOpen(false); }, [collapsed]);
   if (!posts.length) return null;
 
   return (
