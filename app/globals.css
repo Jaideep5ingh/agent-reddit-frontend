@@ -226,6 +226,8 @@
   line-height: 1.75;
   color: var(--report-text);
   letter-spacing: -0.003em;
+  /* Long URLs / unbroken tokens wrap instead of forcing the card past the viewport. */
+  overflow-wrap: break-word;
 }
 .report-md > *:first-child { margin-top: 0; }
 .report-md h1, .report-md h2, .report-md h3, .report-md h4 {
@@ -287,6 +289,16 @@
   margin: 1em 0;
 }
 .report-md pre code { background: none; border: none; padding: 0; color: var(--report-strong); font-size: 0.82em; }
-.report-md table { width: 100%; border-collapse: collapse; margin: 1em 0; font-size: 0.85em; }
+/* A table wider than the card scrolls horizontally inside itself instead of being
+   clipped by the page's overflow-hidden (the mobile "cut off on the right" bug). */
+.report-md table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin: 1em 0;
+  font-size: 0.85em;
+}
 .report-md th, .report-md td { border: 1px solid var(--border); padding: 0.55em 0.8em; text-align: left; }
 .report-md th { background: color-mix(in srgb, var(--foreground) 4%, transparent); color: var(--report-strong); font-weight: 600; }
